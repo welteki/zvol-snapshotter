@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"net"
 	"os"
 	"os/signal"
@@ -13,21 +15,24 @@ import (
 	"github.com/containerd/containerd/v2/contrib/snapshotservice"
 	"github.com/containerd/containerd/v2/core/snapshots"
 	"github.com/containerd/log"
-	"github.com/welteki/zvol-snapshotter/version"
-	"github.com/welteki/zvol-snapshotter/zvol"
+	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
 	"google.golang.org/grpc"
+
+	"github.com/welteki/zvol-snapshotter/version"
+	"github.com/welteki/zvol-snapshotter/zvol"
 )
 
 const (
-	defaultAddress  = "/run/containerd-zvol.sock"
-	defaultLogLevel = log.InfoLevel
-	defaultRootDir  = "/var/lib/containerd-zvol"
+	defaultAddress    = "/run/containerd-zvol.sock"
+	defaultConfigPath = "/etc/containerd-zvol-snapshotter/config.toml"
+	defaultLogLevel   = log.InfoLevel
+	defaultRootDir    = "/var/lib/containerd-zvol"
 )
 
 var (
-	address = flag.String("address", defaultAddress, "address for the snapshotter's GRPC server")
-	// configPath        = flag.String("config", defaultConfigPath, "path to the configuration file")
+	address      = flag.String("address", defaultAddress, "address for the snapshotter's GRPC server")
+	configPath   = flag.String("config", defaultConfigPath, "path to the configuration file")
 	logLevel     = flag.String("log-level", defaultLogLevel.String(), "set the logging level [trace, debug, info, warn, error, fatal, panic]")
 	rootDir      = flag.String("root", defaultRootDir, "path to the root directory for this snapshotter")
 	dataset      = flag.String("dataset", "", "zfs dataset used for snapshots")
@@ -48,20 +53,43 @@ func main() {
 	}
 
 	ctx := context.Background()
-	snapshotterConfig := zvol.Config{
-		RootPath: *rootDir,
-		Dataset:  *dataset,
+
+	log.G(ctx).WithFields(logrus.Fields{
+		"version":  version.Version,
+		"revision": version.Revision,
+	}).Info("starting containerd-zvol-snapshotter")
+
+	snapshotterConfig, err := zvol.NewConfigFromToml(*configPath)
+	if err != nil && !(errors.Is(err, fs.ErrNotExist) && *configPath == defaultConfigPath) {
+		log.G(ctx).WithError(err).Fatalf("failed to load config file %q", *configPath)
 	}
 
-	if snapshotterConfig.Dataset == "" {
-		log.G(ctx).WithError(err).Fatalf("-dataset is required")
+	if snapshotterConfig == nil {
+		snapshotterConfig, err = zvol.NewConfig()
+		if err != nil {
+			log.G(ctx).WithError(err).Fatalf("failed to load config")
+		}
+	}
+
+	if len(snapshotterConfig.RootPath) == 0 {
+		snapshotterConfig.RootPath = *rootDir
+	} else if *rootDir != defaultRootDir {
+		snapshotterConfig.RootPath = *rootDir
+	}
+
+	if len(*dataset) > 0 {
+		snapshotterConfig.Dataset = *dataset
+	}
+
+	if err := snapshotterConfig.Validate(); err != nil {
+		log.G(ctx).WithError(err).Fatalf("invalid snapshotter config")
 	}
 
 	// Create a gRPC server
 	rpc := grpc.NewServer()
 
 	// Create snapshotter
-	sn, err := zvol.NewSnapshotter(ctx, &snapshotterConfig)
+	sn, err := zvol.NewSnapshotter(ctx, snapshotterConfig)
 	if err != nil {
 		log.G(ctx).WithError(err).Fatalf("failed to create snapshotter")
 	}

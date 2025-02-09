@@ -8,6 +8,7 @@ require (
 	github.com/containerd/log v0.1.0
 	github.com/docker/go-units v0.5.0
 	github.com/mistifyio/go-zfs/v3 v3.0.1
+	github.com/pelletier/go-toml/v2 v2.2.3
 	golang.org/x/sys v0.26.0
 	google.golang.org/grpc v1.67.1
 )
