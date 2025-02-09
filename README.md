@@ -28,3 +28,8 @@ Zvol snapshotter is implemented as a proxy plugin daemon. You need the following
     sudo go run cmd/main.go -dataset zroot/snapshots
     ```
 
+## License
+
+Zvol Snapshotter (c) 2025 Han Verstraete
+
+SPDX-License-Identifier: Apache-2.0 
