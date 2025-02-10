@@ -280,6 +280,10 @@ func (s *snapshotter) createSnapshot(ctx context.Context, kind snapshots.Kind, k
 			return nil, errors.Join(errs...)
 		}
 
+		if err := zvolWait(); err != nil {
+			log.G(ctx).WithError(err).Warn("failed to wait for zvol links")
+		}
+
 		readonly := false
 		mounts := getMounts(target, readonly)
 
@@ -299,8 +303,27 @@ func (s *snapshotter) createSnapshot(ctx context.Context, kind snapshots.Kind, k
 		}
 	}
 
+	if err := zvolWait(); err != nil {
+		log.G(ctx).WithError(err).Warn("failed to wait for zvol links")
+	}
+
 	readonly := kind == snapshots.KindView
 	return getMounts(target, readonly), nil
+}
+
+// Wait for all Zvol symlinks to be created by udev(7) under /dev/zvol.
+func zvolWait() error {
+	// TODO: replace with generic go implementation
+	// This implementation depends on the `zvol_wait` script that comes with OpenZFS.
+	command := "zvol_wait"
+
+	o, err := exec.Command(command).CombinedOutput()
+	out := string(o)
+	if err != nil {
+		return fmt.Errorf("waiting for Zvol links wailed: %s: %q: %w", command, out, err)
+	}
+
+	return nil
 }
 
 func getMounts(dataset *zfs.Dataset, readonly bool) []mount.Mount {
