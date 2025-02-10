@@ -1,3 +1,5 @@
+# Base path used to install.
+CMD_DESTDIR ?= /usr/local/bin
 OUTDIR ?= $(CURDIR)/out
 
 PKG=github.com/welteki/zvol-snapshotter
@@ -8,12 +10,26 @@ GO_BUILD_LDFLAGS ?= -s -w
 GO_LD_FLAGS=-ldflags '$(GO_BUILD_LDFLAGS) -X $(PKG)/version.Version=$(VERSION) -X $(PKG)/version.Revision=$(REVISION) $(GO_EXTRA_LDFLAGS)'
 
 CMD = containerd-zvol-grpc
+CMD_BINARIES=$(addprefix $(OUTDIR)/,$(CMD))
+
+all: build
+
 build: $(CMD)
 
 .PHONY: containerd-zvol-grpc
 containerd-zvol-grpc:
-	cd cmd/ ; GO111MODULE=$(GO111MODULE_VALUE) GOARCH=amd64 go build -o $(OUTDIR)/$@-amd64 $(GO_LD_FLAGS) -v .
-	cd cmd/ ; GO111MODULE=$(GO111MODULE_VALUE) GOARCH=arm64 go build -o $(OUTDIR)/$@-arm64 $(GO_LD_FLAGS) -v .
+	cd cmd/ ; GO111MODULE=$(GO111MODULE_VALUE) go build -o $(OUTDIR)/$@ $(GO_LD_FLAGS) -v .
+
+.PHONY: install
+install:
+	@echo "$@"
+	@mkdir -p $(CMD_DESTDIR)
+	@install $(CMD_BINARIES) $(CMD_DESTDIR)
+
+.PHONY: uninstall
+uninstall:
+	@echo "$@"
+	@rm -f $(addprefix $(CMD_DESTDIR)/,$(notdir $(CMD_BINARIES)))
 
 .PHONY: clean
 clean:
@@ -23,4 +39,4 @@ clean:
 .PHONY: test
 test:
 	@echo "$@"
-	@GO111MODULE=$(GO111MODULE_VALUE) go test -race ./...qq
+	@GO111MODULE=$(GO111MODULE_VALUE) go test -race ./...
