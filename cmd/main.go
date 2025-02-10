@@ -24,10 +24,10 @@ import (
 )
 
 const (
-	defaultAddress    = "/run/containerd-zvol.sock"
-	defaultConfigPath = "/etc/containerd-zvol-snapshotter/config.toml"
+	defaultAddress    = "/run/containerd-zvol-grpc/containerd-zvol-grpc.sock"
+	defaultConfigPath = "/etc/containerd-zvol-grpc/config.toml"
 	defaultLogLevel   = log.InfoLevel
-	defaultRootDir    = "/var/lib/containerd-zvol"
+	defaultRootDir    = "/var/lib/containerd-zvol-grpc"
 )
 
 var (
@@ -48,7 +48,7 @@ func main() {
 	}
 
 	if *printVersion {
-		fmt.Println("containerd-zvol-snapshotter", version.Version, version.Revision)
+		fmt.Println("containerd-zvol-grpc", version.Version, version.Revision)
 		return
 	}
 
@@ -57,7 +57,7 @@ func main() {
 	log.G(ctx).WithFields(logrus.Fields{
 		"version":  version.Version,
 		"revision": version.Revision,
-	}).Info("starting containerd-zvol-snapshotter")
+	}).Info("starting containerd-zvol-grpc")
 
 	snapshotterConfig, err := zvol.NewConfigFromToml(*configPath)
 	if err != nil && !(errors.Is(err, fs.ErrNotExist) && *configPath == defaultConfigPath) {

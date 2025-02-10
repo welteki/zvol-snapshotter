@@ -1,11 +1,10 @@
-## ZVOL Snapshotter
+## Zvol Snapshotter
 
 > 🛠 **Status: experimental**
 >
 > This project is a work in progress.
 
 ZFS Volume snapshotter plugin for [containerd](https://github.com/containerd/containerd).
-
 
 ## Getting started
 
@@ -14,27 +13,26 @@ Zvol snapshotter is implemented as a proxy plugin daemon. You will need to creat
 - Update containerd config file which by default is located at `/etc/containerd/config.toml`.
 
     ```toml
-    # Plug vvol snapshotter into containerd
-    # Containerd recognizes the zvol snapshotter through specified socket address.
-    # The specified address below is the default which the zvol snapshotter listens to.
+    # Plug zvol snapshotter into containerd
+    # Containerd recognizes zvol snapshotter through the specified socket address.
+    # The specified address below is the default which zvol snapshotter listens to.
     [proxy_plugins]
       [proxy_plugins.zvol]
         type = "snapshot"
-        address = "/run/containerd-zvol.sock"
+        address = "/run/containerd-zvol-grpc/containerd-zvol-grpc.sock"
     ```
 
-- Create ZFS dataset
+- Create ZFS dataset.
+
+    The dataset name is arbitrary, pick whatever you want.
 
     ```sh
-    sudo zfs create zroot/snapshots 
+    sudo zfs create your-zpool/snapshots 
     ```
-
-    In this example we are creating a new dataset in the `zroot` pool.
-
 - Run  zvol snapshotter daemon.
 
     ```sh
-    containerd-zvol-snapshotter -dataset zroot/snapshots
+    containerd-zvol-grpc -dataset your-zpool/snapshots
     ```
 
 ## License
