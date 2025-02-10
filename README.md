@@ -34,6 +34,30 @@ Zvol snapshotter is implemented as a proxy plugin daemon. You will need to creat
     ```sh
     containerd-zvol-grpc -dataset your-zpool/snapshots
     ```
+## Build zvol snapshotter from source
+
+Checkout the source code using git clone:
+
+```sh
+git clone https://github.com/weltei/zvol-snapshotter.git
+cd zvol-snapshotter
+```
+
+`make` is used as the build tool. Assuming you are in the root directory build the snapshotter by running:
+
+```sh
+make
+```
+
+The snapshotter binary is build into the `./out` directory. Install to a `PATH` directory with:
+
+```sh
+sudo make install
+# check to make sure the Zvol snapshotter can be found in PATH
+sudo zvol-snapshotter-grpc -version
+```
+
+The binary is installed in `/usr/local/bin` by default. Set `CMD_DESTDIR` to change the destination.
 
 ## License
 
