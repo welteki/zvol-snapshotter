@@ -72,6 +72,7 @@ func NewSnapshotter(ctx context.Context, config *Config) (snapshots.Snapshotter,
 
 var zfsCreateVolumeProperties = map[string]string{
 	"refreservation": "none",
+	"volmode":        "full",
 }
 
 // Stat returns the info for an active or committed snapshot by name or
@@ -297,7 +298,7 @@ func (s *snapshotter) createSnapshot(ctx context.Context, kind snapshots.Kind, k
 		if err != nil {
 			return nil, err
 		}
-		target, err = parent0.Clone(targetName, map[string]string{})
+		target, err = parent0.Clone(targetName, zfsCreateVolumeProperties)
 		if err != nil {
 			return nil, err
 		}
@@ -369,6 +370,13 @@ func (s *snapshotter) Commit(ctx context.Context, name, key string, opts ...snap
 		}
 
 		if _, err := active.Snapshot(snapshotSuffix, false); err != nil {
+			return err
+		}
+
+		// After committing the snapshot volume will not be directly
+		// used anymore. Setting volmode to none ensures the volume is not exposed outside of ZFS.
+		// It can still be snapshotted and cloned.
+		if err := active.SetProperty("volmode", "none"); err != nil {
 			return err
 		}
 
