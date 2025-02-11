@@ -88,8 +88,6 @@ func NewConfigFromToml(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to unmarshal config TOML: %w", err)
 	}
 
-	fmt.Println("no decode error")
-
 	if err := config.parse(); err != nil {
 		return nil, err
 	}

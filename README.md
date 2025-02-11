@@ -32,9 +32,9 @@ Zvol snapshotter is implemented as a proxy plugin daemon. You will need to creat
 - Run  zvol snapshotter daemon.
 
     ```sh
-    containerd-zvol-grpc -dataset your-zpool/snapshots
+    sudo containerd-zvol-grpc -dataset=your-zpool/snapshots
     ```
-## Build zvol snapshotter from source
+## Build Zvol snapshotter from source
 
 Checkout the source code using git clone:
 
