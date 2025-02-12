@@ -12,6 +12,8 @@ GO_LD_FLAGS=-ldflags '$(GO_BUILD_LDFLAGS) -X $(PKG)/version.Version=$(VERSION) -
 CMD = containerd-zvol-grpc
 CMD_BINARIES=$(addprefix $(OUTDIR)/,$(CMD))
 
+ZVOL_SNAPSHOTTER_PROJECT_ROOT ?= $(shell pwd)
+
 all: build
 
 build: $(CMD)
@@ -34,9 +36,14 @@ uninstall:
 .PHONY: clean
 clean:
 	@echo "$@"
-	@rm -rf $(OUTDIR)/
+	@rm -rf $(OUTDIR)/*
 
 .PHONY: test
 test:
 	@echo "$@"
 	@GO111MODULE=$(GO111MODULE_VALUE) go test -race ./...
+
+.PHONY: release
+release:
+	@echo "$@"
+	@$(ZVOL_SNAPSHOTTER_PROJECT_ROOT)/scripts/create-release.sh $(RELEASE_TAG)
