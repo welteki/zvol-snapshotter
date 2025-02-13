@@ -6,9 +6,56 @@
 
 ZFS Volume snapshotter plugin for [containerd](https://github.com/containerd/containerd).
 
-## Getting started
+## Install
 
-Zvol snapshotter is implemented as a proxy plugin daemon. You will need to create a zfs pool or dataset to be used for snapshots, run the zvol snapshotter daemon and update the containerd configuration.
+Zvol snapshotter is implemented as a proxy plugin daemon. To use Zvol snapshotter you will need to create a zfs pool or dataset to be used for snapshots, run the Zvol snapshotter daemon and register the snapshotter plugin with containerd.
+
+### Requirements
+
+- [containerd](https://github.com/containerd/containerd/blob/main/docs/getting-started.md) >= 1.4
+- ZFS - On ubuntu it can be installed with `sudo apt install zfsutils-linux`
+
+### Create a ZFS dataset
+
+Create a ZFS dataset that will be used for snapshots. The dataset name is arbitrary, pick whatever you want.
+
+```sh
+sudo zfs create your-zpool/snapshots 
+```
+
+### Run snapshotter daemon
+
+You can download prebuilt binaries for the snapshotter from the [release page](https://github.com/welteki/zvol-snapshotter/releases) or [build them from source](#build-zvol-snapshotter-from-source).
+
+```sh
+version="0.0.2"
+arch="amd64"
+
+wget https://github.com/welteki/zvol-snapshotter/releases/download/v${version}/zvol-snapshotter-${version}-linux-${arch}.tar.gz
+sudo tar -C /usr/local/bin \
+  -xvf zvol-snapshotter-${version}-linux-${arch}.tar.gz zvol-snapshotter-grpc
+```
+
+**Run snapshotter**
+
+```sh
+sudo containerd-zvol-grpc -dataset=your-zpool/snapshots
+```
+
+**Run snapshotter as a systemd service**
+
+To run the Zvol snapshotter process as a systemd service you can download the [zvol-snaphsotter.service unit file](https://github.com/welteki/zvol-snapshotter/blob/main/scripts/config/zvol-snapshotter.service) into `/etc/systemd/system/zvol-snapshotter.service`.
+
+After saving the service file, you can start the service with the usual systemctl dance:
+
+```sh
+sudo systemctl daemon-reload
+sudo systemctl enable zvol-snapshotter
+```
+
+### Configure containerd
+
+Configure and restart containerd to enable Zvol snapshotter. (this section assumes your containerd is managed by systemd)
 
 - Update containerd config file which by default is located at `/etc/containerd/config.toml`.
 
@@ -21,19 +68,38 @@ Zvol snapshotter is implemented as a proxy plugin daemon. You will need to creat
         type = "snapshot"
         address = "/run/containerd-zvol-grpc/containerd-zvol-grpc.sock"
     ```
+- Restart containerd: `sudo systemctl restart containerd`
+- Check to make sure Zvol snapshotter is recognized by containerd: `sudo ctr plugin ls id==zvol`
 
-- Create ZFS dataset.
+### Run
 
-    The dataset name is arbitrary, pick whatever you want.
+Try out the snapshotter with the following command:
 
-    ```sh
-    sudo zfs create your-zpool/snapshots 
-    ```
-- Run  zvol snapshotter daemon.
+```sh
+ctr images pull --snapshotter zvol docker.io/library/hello-world:latest
+ctr run --snapshotter zvol docker.io/library/hello-world:latest test
+```
 
-    ```sh
-    sudo containerd-zvol-grpc -dataset=your-zpool/snapshots
-    ```
+## Configuration
+
+The Zvol snapshotter has a toml config file that is located at `/etc/zvol-snapshotter-grpc/config.toml` by default. If such a file does not exist, Zvol snapshotter will use default values for all configurations.
+
+Example configuration:
+
+```toml
+root_path="/var/lib/containerd-zvol-grpc"
+dataset="your-zpool/snapshots"
+volume_size="20G"
+fs_type="ext4"
+```
+
+The following configuration settings are available:
+
+- `root_path` - Snapshotter root directory for metadata.
+- `dataset` - ZFS dataset that will be used for snapshots.
+- `volume_size` - Space to allocate when creating volumes.
+- `fs_type` - File system to use for snapshot device mounts. (Currently only ext4 is supported)
+
 ## Build Zvol snapshotter from source
 
 Checkout the source code using git clone:

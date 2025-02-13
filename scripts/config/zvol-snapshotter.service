@@ -1,0 +1,14 @@
+[Unit]
+Description=zvol snapshotter
+After=network.target
+Before=containerd.service
+
+[Service]
+Type=notify
+Environment=HOME=/root
+ExecStart=/usr/local/bin/containerd-zvol-grpc --log-level=info --config=/etc/containerd-zvol-grpc/config.toml
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=multi-user.target

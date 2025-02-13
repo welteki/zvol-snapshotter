@@ -1,0 +1,10 @@
+# An example configuration for Zvol snapshotter in TOML format.
+
+# Snapshotter root directory for metadata
+root_path="/var/lib/containerd-zvol-grpc"
+# ZFS dataset that will be used for snapshots
+dataset="your-zpool/snapshots"
+# Space to allocate when creating volumes
+volume_size="20G"
+# File system to use for snapshot device mounts
+fs_type="ext4"
