@@ -4,7 +4,7 @@ After=network.target
 Before=containerd.service
 
 [Service]
-Type=notify
+Type=simple
 Environment=HOME=/root
 ExecStart=/usr/local/bin/containerd-zvol-grpc --log-level=info --config=/etc/containerd-zvol-grpc/config.toml
 Restart=always

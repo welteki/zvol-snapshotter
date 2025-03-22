@@ -33,7 +33,7 @@ arch="amd64"
 
 wget https://github.com/welteki/zvol-snapshotter/releases/download/v${version}/zvol-snapshotter-${version}-linux-${arch}.tar.gz
 sudo tar -C /usr/local/bin \
-  -xvf zvol-snapshotter-${version}-linux-${arch}.tar.gz zvol-snapshotter-grpc
+  -xvf zvol-snapshotter-${version}-linux-${arch}.tar.gz containerd-zvol-grpc
 ```
 
 **Run snapshotter**
@@ -51,6 +51,7 @@ After saving the service file, you can start the service with the usual systemct
 ```sh
 sudo systemctl daemon-reload
 sudo systemctl enable zvol-snapshotter
+sudo systemctl start zvol-snapshotter
 ```
 
 ### Configure containerd
@@ -82,7 +83,7 @@ ctr run --snapshotter zvol docker.io/library/hello-world:latest test
 
 ## Configuration
 
-The Zvol snapshotter has a toml config file that is located at `/etc/zvol-snapshotter-grpc/config.toml` by default. If such a file does not exist, Zvol snapshotter will use default values for all configurations.
+The Zvol snapshotter has a toml config file that is located at `/etc/containerd-zvol-grpc/config.toml` by default. If such a file does not exist, Zvol snapshotter will use default values for all configurations.
 
 Example configuration:
 
