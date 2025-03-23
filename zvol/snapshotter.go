@@ -10,6 +10,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/containerd/containerd/v2/core/mount"
 	"github.com/containerd/containerd/v2/core/snapshots"
@@ -281,9 +282,8 @@ func (s *snapshotter) createSnapshot(ctx context.Context, kind snapshots.Kind, k
 			return nil, errors.Join(errs...)
 		}
 
-		if err := zvolWait(); err != nil {
-			log.G(ctx).WithError(err).Warn("failed to wait for zvol links")
-		}
+		// Wait for Zvol symlinks to be created under /dev/zvol.
+		waitForFile(ctx, devicePath)
 
 		readonly := false
 		mounts := getMounts(target, readonly)
@@ -302,29 +302,14 @@ func (s *snapshotter) createSnapshot(ctx context.Context, kind snapshots.Kind, k
 		if err != nil {
 			return nil, err
 		}
-	}
 
-	if err := zvolWait(); err != nil {
-		log.G(ctx).WithError(err).Warn("failed to wait for zvol links")
+		// Wait for Zvol symlinks to be created under /dev/zvol.
+		devicePath := getDevicePath(target)
+		waitForFile(ctx, devicePath)
 	}
 
 	readonly := kind == snapshots.KindView
 	return getMounts(target, readonly), nil
-}
-
-// Wait for all Zvol symlinks to be created by udev(7) under /dev/zvol.
-func zvolWait() error {
-	// TODO: replace with generic go implementation
-	// This implementation depends on the `zvol_wait` script that comes with OpenZFS.
-	command := "zvol_wait"
-
-	o, err := exec.Command(command).CombinedOutput()
-	out := string(o)
-	if err != nil {
-		return fmt.Errorf("waiting for Zvol links wailed: %s: %q: %w", command, out, err)
-	}
-
-	return nil
 }
 
 func getMounts(dataset *zfs.Dataset, readonly bool) []mount.Mount {
@@ -477,4 +462,23 @@ func mkfs(ctx context.Context, fs fsType, fsOptions string, path string) error {
 
 	log.G(ctx).Debugf("mkfs:\n%s", out)
 	return nil
+}
+
+func waitForFile(ctx context.Context, filePath string) {
+	if _, err := os.Stat(filePath); err == nil {
+		return
+	}
+
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if _, err := os.Stat(filePath); err == nil {
+				return
+			}
+		}
+	}
 }

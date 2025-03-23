@@ -28,7 +28,7 @@ sudo zfs create your-zpool/snapshots
 You can download prebuilt binaries for the snapshotter from the [release page](https://github.com/welteki/zvol-snapshotter/releases) or [build them from source](#build-zvol-snapshotter-from-source).
 
 ```sh
-version="0.0.2"
+version="0.0.3"
 arch="amd64"
 
 wget https://github.com/welteki/zvol-snapshotter/releases/download/v${version}/zvol-snapshotter-${version}-linux-${arch}.tar.gz
@@ -121,7 +121,7 @@ The snapshotter binary is build into the `./out` directory. Install to a `PATH` 
 ```sh
 sudo make install
 # check to make sure the Zvol snapshotter can be found in PATH
-sudo zvol-snapshotter-grpc -version
+sudo containerd-zvol-grpc -version
 ```
 
 The binary is installed in `/usr/local/bin` by default. Set `CMD_DESTDIR` to change the destination.
