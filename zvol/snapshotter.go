@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,6 +25,9 @@ type fsType string
 const fsTypeExt4 fsType = "ext4"
 
 const (
+	// LabelVolumeSize is the label used for the volume size
+	LabelVolumeSize = "containerd.io/snapshot/zvol/size"
+
 	zfsDevicePath = "/dev/zvol"
 
 	// snapshotSuffix is used as follows:
@@ -251,6 +255,40 @@ func (s *snapshotter) View(ctx context.Context, key, parent string, opts ...snap
 }
 
 func (s *snapshotter) createSnapshot(ctx context.Context, kind snapshots.Kind, key, parent string, opts ...snapshots.Opt) ([]mount.Mount, error) {
+	volSize := s.config.volumeSizeBytes
+	if len(parent) > 0 {
+		_, snapInfo, _, err := storage.GetInfo(ctx, parent)
+		if err != nil {
+			log.G(ctx).Errorf("failed to read snapshotInfo for %s", parent)
+			return nil, err
+		}
+
+		if v, ok := snapInfo.Labels[LabelVolumeSize]; ok {
+			volSize, err = strconv.ParseUint(v, 10, 64)
+			if err != nil {
+				log.G(ctx).Errorf("failed to parse volume size for %s", parent)
+				return nil, err
+			}
+		}
+	}
+
+	labels := getLabelOpts(opts...)
+	if v, ok := labels[LabelVolumeSize]; ok {
+		val, err := strconv.ParseUint(v, 10, 64)
+		if err != nil {
+			log.G(ctx).Errorf("failed to parse volume size for %s", key)
+			return nil, err
+		}
+
+		if val < volSize {
+			return nil, fmt.Errorf("invalid volume size for snapshot %s, must be greater than or equal to parent volume size: %d", key, volSize)
+		}
+
+		volSize = val
+	}
+
+	opts = append(opts, WithVolumeSize(volSize))
+
 	snap, err := storage.CreateSnapshot(ctx, kind, key, parent, opts...)
 	if err != nil {
 		return nil, err
@@ -261,7 +299,7 @@ func (s *snapshotter) createSnapshot(ctx context.Context, kind snapshots.Kind, k
 	if len(snap.ParentIDs) == 0 {
 		log.G(ctx).Debugf("creating new zfs volume '%s'", targetName)
 
-		target, err = zfs.CreateVolume(targetName, s.config.volumeSizeBytes, zfsCreateVolumeProperties)
+		target, err = zfs.CreateVolume(targetName, volSize, zfsCreateVolumeProperties)
 		if err != nil {
 			log.G(ctx).WithError(err).Errorf("failed to create zfs volume for snapshot %s", snap.ID)
 			return nil, err
@@ -303,6 +341,13 @@ func (s *snapshotter) createSnapshot(ctx context.Context, kind snapshots.Kind, k
 			return nil, err
 		}
 
+		// Resize target if required
+		if volSize > 0 && parent0.Volsize != volSize {
+			if err := target.SetProperty("volsize", fmt.Sprintf("%d", volSize)); err != nil {
+				return nil, err
+			}
+		}
+
 		// Wait for Zvol symlinks to be created under /dev/zvol.
 		devicePath := getDevicePath(target)
 		waitForFile(ctx, devicePath)
@@ -338,9 +383,21 @@ func (s *snapshotter) Commit(ctx context.Context, name, key string, opts ...snap
 	log.G(ctx).WithFields(log.Fields{"name": name, "key": key}).Debug("commit")
 
 	return s.store.WithTransaction(ctx, true, func(ctx context.Context) error {
+		_, snapInfo, _, err := storage.GetInfo(ctx, key)
+		if err != nil {
+			return err
+		}
+
 		usage, err := s.usage(ctx, key)
 		if err != nil {
 			return err
+		}
+
+		volSizeLabel := snapInfo.Labels[LabelVolumeSize]
+		if volSizeLabel != "" {
+			labels := make(map[string]string)
+			labels[LabelVolumeSize] = volSizeLabel
+			opts = append(opts, snapshots.WithLabels(labels))
 		}
 
 		id, err := storage.CommitActive(ctx, key, name, usage, opts...)
@@ -481,4 +538,24 @@ func waitForFile(ctx context.Context, filePath string) {
 			}
 		}
 	}
+}
+
+// WithVolumeSize sets the ZFS volume size for the created snapshot.
+func WithVolumeSize(size uint64) snapshots.Opt {
+	return func(info *snapshots.Info) error {
+		if info.Labels == nil {
+			info.Labels = make(map[string]string)
+		}
+
+		info.Labels[LabelVolumeSize] = fmt.Sprintf("%d", size)
+		return nil
+	}
+}
+
+func getLabelOpts(opts ...snapshots.Opt) map[string]string {
+	info := &snapshots.Info{}
+	for _, opt := range opts {
+		opt(info)
+	}
+	return info.Labels
 }
