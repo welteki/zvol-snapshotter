@@ -2,12 +2,12 @@ name: Build
 
 on:
   push:
-    branches: ['main']
+    branches: ["main"]
   pull_request:
-    branches: ['main']
+    branches: ["main"]
 
 env:
-  GO_VERSION: '1.23.4'
+  GO_VERSION: "1.24"
 
 jobs:
   test:
