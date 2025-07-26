@@ -16,7 +16,7 @@ Zvol snapshotter is implemented as a proxy plugin daemon. To use Zvol snapshotte
 Create a ZFS dataset that will be used for snapshots. The dataset name is arbitrary, pick whatever you want.
 
 ```sh
-sudo zfs create your-zpool/snapshots 
+sudo zfs create your-zpool/snapshots
 ```
 
 ### Run snapshotter daemon
@@ -24,7 +24,7 @@ sudo zfs create your-zpool/snapshots
 You can download prebuilt binaries for the snapshotter from the [release page](https://github.com/welteki/zvol-snapshotter/releases) or [build them from source](#build-zvol-snapshotter-from-source).
 
 ```sh
-version="0.1.0"
+version="0.2.0"
 arch="amd64"
 
 wget https://github.com/welteki/zvol-snapshotter/releases/download/v${version}/zvol-snapshotter-${version}-linux-${arch}.tar.gz
@@ -126,4 +126,4 @@ The binary is installed in `/usr/local/bin` by default. Set `CMD_DESTDIR` to cha
 
 Zvol Snapshotter (c) 2025 Han Verstraete
 
-SPDX-License-Identifier: Apache-2.0 
+SPDX-License-Identifier: Apache-2.0
