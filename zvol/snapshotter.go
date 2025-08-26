@@ -304,12 +304,15 @@ func (s *snapshotter) createSnapshot(ctx context.Context, kind snapshots.Kind, k
 			log.G(ctx).WithError(err).Errorf("failed to create zfs volume for snapshot %s", snap.ID)
 			return nil, err
 		}
+		devicePath := getDevicePath(target)
+
+		// Wait for Zvol symlinks to be created under /dev/zvol.
+		waitForFile(ctx, devicePath)
 
 		// ext4 options taken from device mapper.
 		// Explicitly disable lazy_itable_init and lazy_journal_init in order to enable lazy initialization.
 		fsOptions := "nodiscard,lazy_itable_init=0,lazy_journal_init=0"
 		log.G(ctx).Debugf("creating file system of type: %s with options: %s on zfs volume %q", fsTypeExt4, fsOptions, target.Name)
-		devicePath := getDevicePath(target)
 		if err := mkfs(ctx, fsTypeExt4, fsOptions, devicePath); err != nil {
 			errs := []error{err}
 
@@ -319,9 +322,6 @@ func (s *snapshotter) createSnapshot(ctx context.Context, kind snapshots.Kind, k
 			log.G(ctx).WithError(errors.Join(errs...)).Errorf("failed to initialize zfs volume %q for snapshot %s", target.Name, snap.ID)
 			return nil, errors.Join(errs...)
 		}
-
-		// Wait for Zvol symlinks to be created under /dev/zvol.
-		waitForFile(ctx, devicePath)
 
 		readonly := false
 		mounts := getMounts(target, readonly)
