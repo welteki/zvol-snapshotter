@@ -435,32 +435,62 @@ func (s *snapshotter) Commit(ctx context.Context, name, key string, opts ...snap
 func (s *snapshotter) Remove(ctx context.Context, key string) error {
 	log.G(ctx).WithField("key", key).Debug("remove")
 
-	return s.store.WithTransaction(ctx, true, func(ctx context.Context) error {
-		id, k, err := storage.Remove(ctx, key)
+	// First, get the snapshot info before removing metadata
+	var id string
+	var k snapshots.Kind
+	err := s.store.WithTransaction(ctx, false, func(ctx context.Context) error {
+		var err error
+		var info snapshots.Info
+		id, info, _, err = storage.GetInfo(ctx, key)
 		if err != nil {
-			return fmt.Errorf("failed to remove snapshot: %w", err)
+			return err
 		}
+		k = info.Kind
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("failed to get snapshot info: %w", err)
+	}
 
-		datasetName := filepath.Join(s.dataset.Name, id)
-		if k == snapshots.KindCommitted {
-			snapshotName := datasetName + "@" + snapshotSuffix
-			snapshot, err := zfs.GetDataset(snapshotName)
-			if err != nil {
-				return err
-			}
+	datasetName := filepath.Join(s.dataset.Name, id)
+
+	// Destroy ZFS resources BEFORE removing metadata
+	// This ensures we don't lose track of volumes if destroy fails
+	if k == snapshots.KindCommitted {
+		snapshotName := datasetName + "@" + snapshotSuffix
+		snapshot, err := zfs.GetDataset(snapshotName)
+		if err != nil {
+			// Snapshot might already be destroyed, log and continue
+			log.G(ctx).WithError(err).Warnf("ZFS snapshot %s not found, may already be destroyed", snapshotName)
+		} else {
 			if err = snapshot.Destroy(zfs.DestroyDeferDeletion); err != nil {
-				return err
+				log.G(ctx).WithError(err).Errorf("failed to destroy ZFS snapshot %s", snapshotName)
+				return fmt.Errorf("failed to destroy ZFS snapshot %s: %w", snapshotName, err)
 			}
+			log.G(ctx).Debugf("destroyed ZFS snapshot %s", snapshotName)
 		}
-		dataset, err := zfs.GetDataset(datasetName)
-		if err != nil {
-			return err
-		}
-		if err = dataset.Destroy(zfs.DestroyDefault); err != nil {
-			return err
-		}
+	}
 
-		return err
+	// Destroy the dataset (volume) for both active and committed snapshots
+	dataset, err := zfs.GetDataset(datasetName)
+	if err != nil {
+		// Dataset might already be destroyed, which is fine
+		log.G(ctx).WithError(err).Debugf("ZFS dataset %s not found, may already be destroyed", datasetName)
+	} else {
+		if err = dataset.Destroy(zfs.DestroyDefault); err != nil {
+			log.G(ctx).WithError(err).Errorf("failed to destroy ZFS dataset %s", datasetName)
+			return fmt.Errorf("failed to destroy ZFS dataset %s: %w", datasetName, err)
+		}
+		log.G(ctx).Debugf("destroyed ZFS dataset %s", datasetName)
+	}
+
+	// Now remove metadata only after ZFS resources are destroyed
+	return s.store.WithTransaction(ctx, true, func(ctx context.Context) error {
+		_, _, err := storage.Remove(ctx, key)
+		if err != nil {
+			return fmt.Errorf("failed to remove snapshot metadata: %w", err)
+		}
+		return nil
 	})
 }
 
