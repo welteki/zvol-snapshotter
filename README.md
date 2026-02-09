@@ -97,6 +97,29 @@ The following configuration settings are available:
 - `volume_size` - Space to allocate when creating volumes.
 - `fs_type` - File system to use for snapshot device mounts. (Currently only ext4 is supported)
 
+## Label Propagation to ZFS
+
+Containerd snapshot labels are automatically stored as ZFS user properties on the underlying datasets. This makes it possible to identify and query ZFS volumes and snapshots based on container metadata using standard `zfs` commands.
+
+Labels are stored with the prefix `containerd:label.` and the label name is sanitized to comply with ZFS property naming rules: characters are lowercased, `/` becomes `_`, while `.`, `:`, `+`, and `_` are preserved.
+
+When a snapshot is committed, the labels are written to the ZFS volume before the ZFS snapshot is taken, so the `@snapshot` automatically inherits them. When cloning from a parent snapshot, only the labels provided by containerd for the new snapshot are set on the clone.
+
+### Querying ZFS datasets by label
+
+List all datasets with any containerd label:
+
+```sh
+zfs get all -r your-zpool/snapshots -o name,property,value | grep "containerd:label"
+```
+
+Find datasets by a custom application label (e.g. `myapp/environment`):
+
+```sh
+zfs get containerd:label.myapp_environment \
+  -r your-zpool/snapshots -o name,value -Hp | grep -v $'\t-'
+```
+
 ## Build Zvol snapshotter from source
 
 Checkout the source code using git clone:
