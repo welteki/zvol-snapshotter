@@ -24,7 +24,7 @@ sudo zfs create your-zpool/snapshots
 You can download prebuilt binaries for the snapshotter from the [release page](https://github.com/welteki/zvol-snapshotter/releases) or [build them from source](#build-zvol-snapshotter-from-source).
 
 ```sh
-version="0.2.1"
+version="0.3.0"
 arch="amd64"
 
 wget https://github.com/welteki/zvol-snapshotter/releases/download/v${version}/zvol-snapshotter-${version}-linux-${arch}.tar.gz
