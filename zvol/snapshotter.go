@@ -28,6 +28,9 @@ const (
 	// LabelVolumeSize is the label used for the volume size
 	LabelVolumeSize = "containerd.io/snapshot/zvol/size"
 
+	zfsLabelPropertyPrefix    = "containerd:label."
+	zfsLabelPropertyMaxLength = 256
+
 	zfsDevicePath = "/dev/zvol"
 
 	// snapshotSuffix is used as follows:
@@ -287,6 +290,8 @@ func (s *snapshotter) createSnapshot(ctx context.Context, kind snapshots.Kind, k
 		volSize = val
 	}
 
+	labels[LabelVolumeSize] = fmt.Sprintf("%d", volSize)
+
 	opts = append(opts, WithVolumeSize(volSize))
 
 	snap, err := storage.CreateSnapshot(ctx, kind, key, parent, opts...)
@@ -330,6 +335,10 @@ func (s *snapshotter) createSnapshot(ctx context.Context, kind snapshots.Kind, k
 		_ = mount.WithTempMount(ctx, mounts, func(root string) error {
 			return os.Remove(filepath.Join(root, "lost+found"))
 		})
+
+		if err := setZfsLabelProperties(ctx, target, labels); err != nil {
+			return nil, err
+		}
 	} else {
 		parent0Name := filepath.Join(s.dataset.Name, snap.ParentIDs[0]+"@"+snapshotSuffix)
 		parent0, err := zfs.GetDataset(parent0Name)
@@ -351,6 +360,10 @@ func (s *snapshotter) createSnapshot(ctx context.Context, kind snapshots.Kind, k
 		// Wait for Zvol symlinks to be created under /dev/zvol.
 		devicePath := getDevicePath(target)
 		waitForFile(ctx, devicePath)
+
+		if err := setZfsLabelProperties(ctx, target, labels); err != nil {
+			return nil, err
+		}
 	}
 
 	readonly := kind == snapshots.KindView
@@ -400,6 +413,15 @@ func (s *snapshotter) Commit(ctx context.Context, name, key string, opts ...snap
 			opts = append(opts, snapshots.WithLabels(labels))
 		}
 
+		labelOpts := getLabelOpts(opts...)
+		allLabels := make(map[string]string, len(snapInfo.Labels)+len(labelOpts))
+		for key, value := range snapInfo.Labels {
+			allLabels[key] = value
+		}
+		for key, value := range labelOpts {
+			allLabels[key] = value
+		}
+
 		id, err := storage.CommitActive(ctx, key, name, usage, opts...)
 		if err != nil {
 			return err
@@ -409,6 +431,12 @@ func (s *snapshotter) Commit(ctx context.Context, name, key string, opts ...snap
 		active, err := zfs.GetDataset(activeName)
 		if err != nil {
 			return err
+		}
+
+		if len(allLabels) > 0 {
+			if err := setZfsLabelProperties(ctx, active, allLabels); err != nil {
+				return err
+			}
 		}
 
 		if _, err := active.Snapshot(snapshotSuffix, false); err != nil {
@@ -583,9 +611,53 @@ func WithVolumeSize(size uint64) snapshots.Opt {
 }
 
 func getLabelOpts(opts ...snapshots.Opt) map[string]string {
-	info := &snapshots.Info{}
+	info := &snapshots.Info{
+		Labels: make(map[string]string),
+	}
 	for _, opt := range opts {
 		opt(info)
 	}
 	return info.Labels
+}
+
+func setZfsLabelProperties(ctx context.Context, dataset *zfs.Dataset, labels map[string]string) error {
+	for key, value := range labels {
+		propertyName := zfsLabelPropertyPrefix + sanitizeZfsLabelPropertyName(key)
+		if propertyName == zfsLabelPropertyPrefix {
+			log.G(ctx).Warnf("skipping empty label name for dataset %s", dataset.Name)
+			continue
+		}
+		if len(propertyName) > zfsLabelPropertyMaxLength {
+			propertyName = propertyName[:zfsLabelPropertyMaxLength]
+			log.G(ctx).Warnf("truncated zfs label property name to %q", propertyName)
+		}
+		if err := dataset.SetProperty(propertyName, value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+
+func sanitizeZfsLabelPropertyName(label string) string {
+	label = strings.ToLower(label)
+	if label == "" {
+		return ""
+	}
+
+	var builder strings.Builder
+	builder.Grow(len(label))
+	for _, character := range label {
+		switch {
+		case character >= 'a' && character <= 'z':
+			builder.WriteRune(character)
+		case character >= '0' && character <= '9':
+			builder.WriteRune(character)
+		case character == ':' || character == '+' || character == '.' || character == '_':
+			builder.WriteRune(character)
+		default:
+			builder.WriteByte('_')
+		}
+	}
+	return builder.String()
 }
