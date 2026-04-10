@@ -18,6 +18,7 @@ import (
 	"github.com/containerd/containerd/v2/core/snapshots/storage"
 	"github.com/containerd/log"
 	"github.com/mistifyio/go-zfs/v3"
+	"golang.org/x/sys/unix"
 )
 
 type fsType string
@@ -304,11 +305,13 @@ func (s *snapshotter) createSnapshot(ctx context.Context, kind snapshots.Kind, k
 	}
 
 	targetName := filepath.Join(s.dataset.Name, snap.ID)
+	createProps := zfsCreationProperties(ctx, labels)
+
 	var target *zfs.Dataset
 	if len(snap.ParentIDs) == 0 {
 		log.G(ctx).Debugf("creating new zfs volume '%s'", targetName)
 
-		target, err = zfs.CreateVolume(targetName, volSize, zfsCreateVolumeProperties)
+		target, err = zfs.CreateVolume(targetName, volSize, createProps)
 		if err != nil {
 			log.G(ctx).WithError(err).Errorf("failed to create zfs volume for snapshot %s", snap.ID)
 			return nil, err
@@ -316,7 +319,9 @@ func (s *snapshotter) createSnapshot(ctx context.Context, kind snapshots.Kind, k
 		devicePath := getDevicePath(target)
 
 		// Wait for Zvol symlinks to be created under /dev/zvol.
-		waitForFile(ctx, devicePath)
+		if err := waitForFile(ctx, devicePath); err != nil {
+			return nil, fmt.Errorf("waiting for device %s: %w", devicePath, err)
+		}
 
 		// ext4 options taken from device mapper.
 		// Explicitly disable lazy_itable_init and lazy_journal_init in order to enable lazy initialization.
@@ -339,17 +344,13 @@ func (s *snapshotter) createSnapshot(ctx context.Context, kind snapshots.Kind, k
 		_ = mount.WithTempMount(ctx, mounts, func(root string) error {
 			return os.Remove(filepath.Join(root, "lost+found"))
 		})
-
-		if err := setZfsLabelProperties(ctx, target, labels); err != nil {
-			return nil, err
-		}
 	} else {
 		parent0Name := filepath.Join(s.dataset.Name, snap.ParentIDs[0]+"@"+snapshotSuffix)
 		parent0, err := zfs.GetDataset(parent0Name)
 		if err != nil {
 			return nil, err
 		}
-		target, err = parent0.Clone(targetName, zfsCreateVolumeProperties)
+		target, err = parent0.Clone(targetName, createProps)
 		if err != nil {
 			return nil, err
 		}
@@ -363,10 +364,8 @@ func (s *snapshotter) createSnapshot(ctx context.Context, kind snapshots.Kind, k
 
 		// Wait for Zvol symlinks to be created under /dev/zvol.
 		devicePath := getDevicePath(target)
-		waitForFile(ctx, devicePath)
-
-		if err := setZfsLabelProperties(ctx, target, labels); err != nil {
-			return nil, err
+		if err := waitForFile(ctx, devicePath); err != nil {
+			return nil, fmt.Errorf("waiting for device %s: %w", devicePath, err)
 		}
 	}
 
@@ -583,20 +582,121 @@ func mkfs(ctx context.Context, fs fsType, fsOptions string, path string) error {
 	return nil
 }
 
-func waitForFile(ctx context.Context, filePath string) {
+const waitForFileTimeout = 30 * time.Second
+
+// waitForFile waits for a file to appear at filePath using inotify for
+// instant notification when the device node is created by udev. Falls
+// back to polling if inotify setup fails.
+//
+// When the immediate parent directory does not yet exist (e.g. udev
+// removed it after volmode=none), the watch starts on the nearest
+// existing ancestor and is refined as intermediate directories appear.
+func waitForFile(ctx context.Context, filePath string) error {
 	if _, err := os.Stat(filePath); err == nil {
-		return
+		return nil
 	}
+
+	fd, err := unix.InotifyInit1(unix.IN_CLOEXEC | unix.IN_NONBLOCK)
+	if err != nil {
+		log.G(ctx).WithError(err).Debug("inotify unavailable, falling back to polling")
+		return waitForFilePolling(ctx, filePath)
+	}
+	defer unix.Close(fd)
+
+	// Find the nearest existing ancestor to watch. The immediate
+	// parent may not exist yet when udev cleaned up the directory
+	// after the last zvol in it had volmode set to none.
+	targetDir := filepath.Dir(filePath)
+	watchDir := targetDir
+	for watchDir != "/" {
+		if _, err := os.Stat(watchDir); err == nil {
+			break
+		}
+		watchDir = filepath.Dir(watchDir)
+	}
+
+	if _, err := unix.InotifyAddWatch(fd, watchDir, unix.IN_CREATE); err != nil {
+		log.G(ctx).WithError(err).Debugf("inotify watch on %s failed, falling back to polling", watchDir)
+		return waitForFilePolling(ctx, filePath)
+	}
+
+	// Re-check after watch is set to close the race window.
+	if _, err := os.Stat(filePath); err == nil {
+		return nil
+	}
+
+	timeout := time.NewTimer(waitForFileTimeout)
+	defer timeout.Stop()
+
+	buf := make([]byte, (unix.SizeofInotifyEvent+unix.NAME_MAX+1)*8)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timeout.C:
+			return fmt.Errorf("timed out after %s waiting for %s", waitForFileTimeout, filePath)
+		default:
+		}
+
+		// Poll the inotify fd with a 100ms timeout so we can check
+		// context cancellation and the deadline between events.
+		pollFds := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}}
+		n, err := unix.Poll(pollFds, 100)
+		if err != nil {
+			if err == unix.EINTR {
+				continue
+			}
+			return fmt.Errorf("poll: %w", err)
+		}
+		if n == 0 {
+			continue
+		}
+
+		if _, err := unix.Read(fd, buf); err != nil {
+			if err == unix.EAGAIN {
+				continue
+			}
+			return fmt.Errorf("inotify read: %w", err)
+		}
+
+		// Check if the target appeared.
+		if _, err := os.Stat(filePath); err == nil {
+			return nil
+		}
+
+		// If we were watching an ancestor, try to refine the
+		// watch to the immediate parent now that it may exist.
+		if watchDir != targetDir {
+			if _, err := os.Stat(targetDir); err == nil {
+				if _, err := unix.InotifyAddWatch(fd, targetDir, unix.IN_CREATE); err == nil {
+					watchDir = targetDir
+				}
+				// Re-check after adding the more specific watch.
+				if _, err := os.Stat(filePath); err == nil {
+					return nil
+				}
+			}
+		}
+	}
+}
+
+// waitForFilePolling is a fallback when inotify is unavailable.
+func waitForFilePolling(ctx context.Context, filePath string) error {
+	timeout := time.NewTimer(waitForFileTimeout)
+	defer timeout.Stop()
 
 	ticker := time.NewTicker(5 * time.Millisecond)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return ctx.Err()
+		case <-timeout.C:
+			return fmt.Errorf("timed out after %s waiting for %s", waitForFileTimeout, filePath)
 		case <-ticker.C:
 			if _, err := os.Stat(filePath); err == nil {
-				return
+				return nil
 			}
 		}
 	}
@@ -624,6 +724,29 @@ func getLabelOpts(opts ...snapshots.Opt) map[string]string {
 	return info.Labels
 }
 
+// zfsCreationProperties merges zfsCreateVolumeProperties with sanitized
+// label properties into a single map suitable for CreateVolume or Clone.
+// This avoids N separate SetProperty (fork+exec) calls after creation.
+func zfsCreationProperties(ctx context.Context, labels map[string]string) map[string]string {
+	props := make(map[string]string, len(zfsCreateVolumeProperties)+len(labels))
+	for k, v := range zfsCreateVolumeProperties {
+		props[k] = v
+	}
+	for key, value := range labels {
+		propertyName := zfsLabelPropertyPrefix + sanitizeZfsLabelPropertyName(key)
+		if propertyName == zfsLabelPropertyPrefix {
+			log.G(ctx).Warnf("skipping empty label name")
+			continue
+		}
+		if len(propertyName) > zfsLabelPropertyMaxLength {
+			propertyName = propertyName[:zfsLabelPropertyMaxLength]
+			log.G(ctx).Warnf("truncated zfs label property name to %q", propertyName)
+		}
+		props[propertyName] = value
+	}
+	return props
+}
+
 func setZfsLabelProperties(ctx context.Context, dataset *zfs.Dataset, labels map[string]string) error {
 	for key, value := range labels {
 		propertyName := zfsLabelPropertyPrefix + sanitizeZfsLabelPropertyName(key)
@@ -641,7 +764,6 @@ func setZfsLabelProperties(ctx context.Context, dataset *zfs.Dataset, labels map
 	}
 	return nil
 }
-
 
 func sanitizeZfsLabelPropertyName(label string) string {
 	label = strings.TrimPrefix(label, containerdSnapshotLabelPrefix)
