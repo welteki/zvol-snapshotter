@@ -354,16 +354,23 @@ func (s *snapshotter) createSnapshot(ctx context.Context, kind snapshots.Kind, k
 			return nil, err
 		}
 
+		// Wait for Zvol symlinks to be created under /dev/zvol.
+		devicePath := getDevicePath(target)
+		waitForFile(ctx, devicePath)
+
 		// Resize target if required
 		if volSize > 0 && parent0.Volsize != volSize {
 			if err := target.SetProperty("volsize", fmt.Sprintf("%d", volSize)); err != nil {
 				return nil, err
 			}
-		}
 
-		// Wait for Zvol symlinks to be created under /dev/zvol.
-		devicePath := getDevicePath(target)
-		waitForFile(ctx, devicePath)
+			mounts := getMounts(target, false)
+			if err := mount.WithTempMount(ctx, mounts, func(root string) error {
+				return resizefs(ctx, fsTypeExt4, devicePath)
+			}); err != nil {
+				return nil, err
+			}
+		}
 
 		if err := setZfsLabelProperties(ctx, target, labels); err != nil {
 			return nil, err
@@ -580,6 +587,27 @@ func mkfs(ctx context.Context, fs fsType, fsOptions string, path string) error {
 	}
 
 	log.G(ctx).Debugf("mkfs:\n%s", out)
+	return nil
+}
+
+// resizefs expands the filesystem on the given device to fill the available space.
+// The device must be mounted for online resize to work without requiring e2fsck.
+func resizefs(ctx context.Context, fs fsType, devicePath string) error {
+	if fs != fsTypeExt4 {
+		return errors.New("file system not supported")
+	}
+
+	command := "resize2fs"
+	args := []string{devicePath}
+
+	log.G(ctx).Debugf("%s %s", command, strings.Join(args, " "))
+	o, err := exec.Command(command, args...).CombinedOutput()
+	out := string(o)
+	if err != nil {
+		return fmt.Errorf("%s failed to resize %q: %s: %w", command, devicePath, out, err)
+	}
+
+	log.G(ctx).Debugf("resizefs:\n%s", out)
 	return nil
 }
 
